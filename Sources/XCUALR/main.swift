@@ -30,6 +30,7 @@ struct ExportConfiguration {
     let passedStepImagePaletteColors: Int
     let rawAttachments: Bool
     let force: Bool
+    let noLibs: Bool
 }
 
 struct ExportedTest: Codable {
@@ -262,6 +263,7 @@ struct XCUALR {
         var passedStepImagePaletteColors = 64
         var rawAttachments = false
         var force = false
+        var noLibs = false
         var positional: [String] = []
 
         var index = 0
@@ -296,6 +298,8 @@ struct XCUALR {
                 rawAttachments = true
             case "-f", "--force":
                 force = true
+            case "--no-libs":
+                noLibs = true
             case "--help", "-h":
                 throw CLIError.usage(usage())
             default:
@@ -318,7 +322,8 @@ struct XCUALR {
             imageScale: imageScale,
             passedStepImagePaletteColors: passedStepImagePaletteColors,
             rawAttachments: rawAttachments,
-            force: force
+            force: force,
+            noLibs: noLibs
         )
     }
 
@@ -333,6 +338,7 @@ struct XCUALR {
           --passed-step-image-palette-colors <int>     Default: 64
           --raw-attachments
           -f, --force                                  Remove output directory before exporting
+          --no-libs                                    Disable helper binaries and use native fallbacks
         """
     }
 }
@@ -340,6 +346,8 @@ struct XCUALR {
 struct ExportCommand {
     let configuration: ExportConfiguration
     private let useColor = isatty(STDERR_FILENO) != 0
+    private let pngQuantPath = Self.resolvePngQuantPath()
+    private nonisolated(unsafe) static var didPrintPngQuantHint = false
 
     private func stylize(_ text: String, _ code: String) -> String {
         guard useColor else { return text }
@@ -352,6 +360,18 @@ struct ExportCommand {
 
     private func logStage(_ message: String) {
         fputs("\(message)\n", stderr)
+    }
+
+    private func logPngQuantHintIfNeeded() {
+        guard Self.didPrintPngQuantHint == false else {
+            return
+        }
+        Self.didPrintPngQuantHint = true
+        if configuration.noLibs {
+            logStage("pngquant disabled; falling back to native palette quantization.")
+        } else {
+            logStage("pngquant not found; falling back to native palette quantization. For faster exports, run: brew install pngquant")
+        }
     }
 
     func run() throws {
@@ -1055,6 +1075,16 @@ struct ExportCommand {
               originalSize >= paletteOptimizationMinimumSizeBytes else {
             return
         }
+        if !configuration.noLibs, let pngQuantPath {
+            do {
+                try optimizePNGPaletteWithPNGQuant(at: url, executablePath: pngQuantPath, originalSize: originalSize)
+                return
+            } catch {
+                // Fall back to the native quantizer if pngquant is unavailable or fails.
+            }
+        } else {
+            logPngQuantHintIfNeeded()
+        }
         guard let sourceImage = CGImageSourceCreateWithURL(url as CFURL, nil),
               let decodedImage = CGImageSourceCreateImageAtIndex(sourceImage, 0, nil) else {
             return
@@ -1080,6 +1110,58 @@ struct ExportCommand {
 
         try FileManager.default.removeItem(at: url)
         try FileManager.default.moveItem(at: temporaryURL, to: url)
+    }
+
+    private func optimizePNGPaletteWithPNGQuant(at url: URL,
+                                                executablePath: String,
+                                                originalSize: Int64) throws {
+        let temporaryURL = url.deletingLastPathComponent()
+            .appendingPathComponent("\(url.deletingPathExtension().lastPathComponent)-pngquant.png")
+        try? FileManager.default.removeItem(at: temporaryURL)
+
+        let colors = max(2, min(configuration.passedStepImagePaletteColors, 256))
+        _ = try runCommand(
+            executablePath: executablePath,
+            arguments: [
+                "--speed", "1",
+                "--strip",
+                "--force",
+                "--output", temporaryURL.path,
+                "--colors", "\(colors)",
+                url.path
+            ]
+        )
+
+        guard let quantizedSize = fileSize(at: temporaryURL),
+              quantizedSize < originalSize else {
+            try? FileManager.default.removeItem(at: temporaryURL)
+            return
+        }
+
+        try FileManager.default.removeItem(at: url)
+        try FileManager.default.moveItem(at: temporaryURL, to: url)
+    }
+
+    private static func resolvePngQuantPath() -> String? {
+        let candidates = [
+            "/opt/homebrew/bin/pngquant",
+            "/usr/local/bin/pngquant",
+            "/usr/bin/pngquant"
+        ]
+        for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
+            return candidate
+        }
+
+        guard let path = ProcessInfo.processInfo.environment["PATH"] else {
+            return nil
+        }
+        for directory in path.split(separator: ":") {
+            let candidate = "\(directory)/pngquant"
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return nil
     }
 
     private func mimeType(forExtension ext: String, fileName: String) -> String {

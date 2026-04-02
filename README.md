@@ -12,6 +12,8 @@ XCUALR is a native Swift command-line tool for turning `.xcresult` bundles into 
 
 - `--image-scale <int>` controls image downscaling before export. Default is `3`.
 - `--passed-step-image-palette-colors <int>` controls palette quantization for passed-step screenshots. Default is `64`.
+- If `pngquant` is installed, XCUALR will use it for PNG palette optimization and fall back to the native Swift quantizer otherwise.
+- Installing `pngquant` gives faster PNG quantization and usually better compression than the native fallback, while keeping the binary usable without it.
 - `--raw-attachments` keeps attachments in their original format and skips image conversion.
 - `--broken-config-path <path>` lets you mark known failure patterns as `broken`.
 
