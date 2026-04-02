@@ -2,36 +2,70 @@
 
 The High-Quality way to render Xcode results.
 
-**XCUALR** (pronounced *ex-qual-er*) stands for **XCode Ultimate ALlure Renderer**.
+**xcualr** (pronounced *ex-qual-er*) stands for **XCode Ultimate ALlure Renderer**.
 
-XCUALR is a native Swift command-line tool for turning `.xcresult` bundles into polished Allure-compatible output. It is designed to be fast, deterministic, and easy to run in CI without extra runtime helpers.
+xcualr is a native Swift command-line tool for turning `.xcresult` bundles into polished Allure-compatible output. It is designed to be fast, deterministic, and easy to run in CI without extra runtime helpers.
 
 ---
 
-## Runtime Options
+## Installation
+
+### For Apple Silicon Macs (`arm64`)
+
+1. Download the executable file:
+```sh
+wget https://github.com/frezot/xcualr/releases/latest/download/xcualr
+```
+
+2. Make the file executable:
+```sh
+chmod +x xcualr
+```
+
+### For Intel Macs (`x86_64`)
+
+1. Download the executable file:
+```sh
+wget https://github.com/frezot/xcualr/releases/latest/download/xcualr-x86_64 -O xcualr
+```
+
+2. Make the file executable:
+```sh
+chmod +x xcualr
+```
+
+### Homebrew
+
+If you want a `brew install xcualr` formula sooner, give the repo a star ⭐️ on GitHub.
+
+It helps show demand and makes it easier to prioritize publishing and maintaining the formula.
+
+## Usage
 
 - `--image-scale <int>` controls image downscaling before export. Default is `3`.
 - `--passed-step-image-palette-colors <int>` controls palette quantization for passed-step screenshots. Default is `64`.
-- If `pngquant` is installed, XCUALR will use it for PNG palette optimization and fall back to the native Swift quantizer otherwise.
+- If `pngquant` is installed, xcualr will use it for PNG palette optimization and fall back to the native Swift quantizer otherwise.
 - Installing `pngquant` gives faster PNG quantization and usually better compression than the native fallback, while keeping the binary usable without it.
-- `--raw-attachments` keeps attachments in their original format and skips image conversion.
-- `--broken-config-path <path>` lets you mark known failure patterns as `broken`.
+- `--raw-attachments` keeps attachments as-is; HEIC/HEIF stay in their original format and image conversion is skipped.
+- `-f, --force` removes the output directory before exporting.
+
+Example:
+
+```sh
+./xcualr export build/Logs/Test/TestRunner.xcresult -o build/Allure -f
+```
 
 ---
 
-## Why XCUALR?
+## What xcualr improves
 
-- **Fast**: native Swift implementation, no Ruby or Python wrapper.
-- **Precise**: focuses on attachment handling, step mapping, and stable output.
-- **Lightweight**: one binary, no runtime dependencies.
-- **Deterministic**: predictable staging and output layout.
+xcualr exists to make `.xcresult` exports predictable, fast, and low-maintenance:
 
----
-
-## Status
-
-Public build and usage instructions will land closer to release.
-For now, this repository is focused on the exporter itself and regression-safe output.
+- native Swift instead of Ruby or Python wrappers
+- deterministic staging and output layout
+- focused attachment handling and step mapping
+- stable image processing with a fast path for PNG optimization
+- no runtime dependencies unless you opt into the helper-assisted path
 
 ## Credits
 

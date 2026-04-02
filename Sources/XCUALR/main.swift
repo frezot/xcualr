@@ -25,7 +25,6 @@ enum CLIError: Error, CustomStringConvertible {
 struct ExportConfiguration {
     let inputPath: String
     let outputPath: String
-    let brokenConfigPath: String?
     let imageScale: Int
     let passedStepImagePaletteColors: Int
     let rawAttachments: Bool
@@ -222,17 +221,9 @@ struct PreparedAttachmentCandidate {
 
 private let paletteOptimizationMinimumSizeBytes: Int64 = 16 * 1024
 
-struct BrokenConfig: Codable {
-    let matchers: [BrokenStatusMatcher]
-}
-
-struct BrokenStatusMatcher: Codable {
-    let messageRegexp: String?
-    let traceRegexp: String?
-}
-
 @main
 struct XCUALR {
+    private static let version = "0.1.0"
 
     static func main() {
         do {
@@ -247,6 +238,8 @@ struct XCUALR {
                 try ExportCommand(configuration: configuration).run()
             case "--help", "-h", "help":
                 print(usage())
+            case "--version", "-v", "version":
+                print(version)
             default:
                 throw CLIError.usage(usage())
             }
@@ -258,7 +251,6 @@ struct XCUALR {
 
     private static func parseExportConfiguration(_ arguments: [String]) throws -> ExportConfiguration {
         var outputPath: String?
-        var brokenConfigPath: String?
         var imageScale = 3
         var passedStepImagePaletteColors = 64
         var rawAttachments = false
@@ -276,12 +268,6 @@ struct XCUALR {
                     throw CLIError.usage("Missing value for \(argument)\n\n\(usage())")
                 }
                 outputPath = arguments[index]
-            case "--broken-config-path":
-                index += 1
-                guard index < arguments.count else {
-                    throw CLIError.usage("Missing value for \(argument)\n\n\(usage())")
-                }
-                brokenConfigPath = arguments[index]
             case "--image-scale":
                 index += 1
                 guard index < arguments.count, let value = Int(arguments[index]), value > 0 else {
@@ -318,7 +304,6 @@ struct XCUALR {
         return ExportConfiguration(
             inputPath: positional[0],
             outputPath: outputPath,
-            brokenConfigPath: brokenConfigPath,
             imageScale: imageScale,
             passedStepImagePaletteColors: passedStepImagePaletteColors,
             rawAttachments: rawAttachments,
@@ -328,17 +313,15 @@ struct XCUALR {
     }
 
     private static func usage() -> String {
-        """
+        return """
         Usage:
           xcualr export <path-to-xcresult> -o <output-dir> [options]
 
         Options:
-          --broken-config-path <path>
-          --image-scale <int>                           Default: 3
-          --passed-step-image-palette-colors <int>     Default: 64
-          --raw-attachments
-          -f, --force                                  Remove output directory before exporting
-          --no-libs                                    Disable helper binaries and use native fallbacks
+          --image-scale <int>                            Default: 3
+          --passed-step-image-palette-colors <int>       Default: 64
+          --raw-attachments                              Keep attachments as-is; HEIC/HEIF stay in their original format
+          -f, --force                                    Clear output directory before exporting
         """
     }
 }
@@ -400,7 +383,6 @@ struct ExportCommand {
         let exportedTests = SummaryParser()
             .collectTests(from: testsTree, summary: summary)
 
-        let brokenConfig = loadBrokenConfig()
         logStage("Exporting attachments...")
         let attachmentCatalog = try exportAttachments(tool: tool, tests: exportedTests, to: stagingURL)
         logStage("Writing Allure results...")
@@ -408,7 +390,6 @@ struct ExportCommand {
             for: exportedTests,
             tool: tool,
             attachmentCatalog: attachmentCatalog,
-            brokenConfig: brokenConfig,
             issueCatalog: issueCatalog,
             activityCatalog: activityCatalog,
             to: stagingURL
@@ -430,7 +411,6 @@ struct ExportCommand {
     private func writeAllureResults(for tests: [ExportedTest],
                                     tool: XCResultTool,
                                     attachmentCatalog: AttachmentCatalog,
-                                    brokenConfig: BrokenConfig?,
                                     issueCatalog: IssueCatalog,
                                     activityCatalog: ActivityCatalog,
                                     to outputURL: URL) throws {
@@ -456,7 +436,7 @@ struct ExportCommand {
             )
             let normalizedStart = steps.first?.start ?? buildStart(for: test, testDetails: testDetails)
             let normalizedStop = steps.last?.stop ?? buildStop(for: test, testDetails: testDetails)
-            var result = AllureResult(
+            let result = AllureResult(
                 name: test.name,
                 status: mapStatus(test.status),
                 fullName: test.identifier,
@@ -476,42 +456,12 @@ struct ExportCommand {
                 steps: steps,
                 statusDetails: buildStatusDetails(for: test, testDetails: testDetails, issueCatalog: issueCatalog)
             )
-            applyBrokenStatusIfNeeded(to: &result, brokenConfig: brokenConfig)
             if !configuration.rawAttachments && configuration.passedStepImagePaletteColors > 0 {
                 optimizePassedStepAttachments(in: result.steps, outputURL: outputURL)
             }
             let fileURL = outputURL.appendingPathComponent(deterministicResultFileName(for: test.identifier))
             let data = try encoder.encode(result)
             try data.write(to: fileURL)
-        }
-    }
-
-    private func loadBrokenConfig() -> BrokenConfig? {
-        guard let brokenConfigPath = configuration.brokenConfigPath else {
-            return nil
-        }
-        let url = URL(fileURLWithPath: brokenConfigPath)
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            return nil
-        }
-        do {
-            let data = try Data(contentsOf: url)
-            return try JSONDecoder().decode(BrokenConfig.self, from: data)
-        } catch {
-            return nil
-        }
-    }
-
-    private func applyBrokenStatusIfNeeded(to result: inout AllureResult, brokenConfig: BrokenConfig?) {
-        guard result.status == "failed",
-              let brokenConfig else {
-            return
-        }
-        let message = result.statusDetails?.message ?? ""
-        let trace = result.statusDetails?.trace ?? ""
-        let matcher = BrokenMatcher(config: brokenConfig)
-        if matcher.isBroken(message: message, trace: trace) {
-            result.status = "broken"
         }
     }
 
@@ -2263,32 +2213,6 @@ struct SwiftPaletteQuantizer {
             srgb = 1.055 * pow(clamped, 1.0 / 2.4) - 0.055
         }
         return UInt8(max(0, min(255, Int((srgb * 255.0).rounded()))))
-    }
-}
-
-struct BrokenMatcher {
-    let config: BrokenConfig
-
-    func isBroken(message: String, trace: String) -> Bool {
-        for matcher in config.matchers {
-            let messageMatched = matches(pattern: matcher.messageRegexp, in: message)
-            let traceMatched = matches(pattern: matcher.traceRegexp, in: trace)
-            if messageMatched || traceMatched {
-                return true
-            }
-        }
-        return false
-    }
-
-    private func matches(pattern: String?, in text: String) -> Bool {
-        guard let pattern, !pattern.isEmpty else {
-            return false
-        }
-        return (try? NSRegularExpression(pattern: pattern))
-            .map { regex in
-                let range = NSRange(text.startIndex..<text.endIndex, in: text)
-                return regex.firstMatch(in: text, options: [], range: range) != nil
-            } ?? false
     }
 }
 
