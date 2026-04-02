@@ -63,3 +63,6 @@ fastlane/test_output
 
 
 # Other
+.DS_Store
+examples
+AGENTS.md
