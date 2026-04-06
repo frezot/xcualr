@@ -195,12 +195,33 @@ struct ExportCommand {
             try FileManager.default.removeItem(at: outputURL)
         }
         if FileManager.default.fileExists(atPath: outputURL.path) {
-            _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: stagingURL)
+            if configuration.force {
+                _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: stagingURL)
+            } else {
+                try mergeExportArtifacts(from: stagingURL, into: outputURL)
+            }
         } else {
             try FileManager.default.moveItem(at: stagingURL, to: outputURL)
         }
 
         logStage("Export time: \(String(format: "%.2f", Date().timeIntervalSince(exportStartedAt)))s")
+    }
+
+    private func mergeExportArtifacts(from stagingURL: URL, into outputURL: URL) throws {
+        let fileManager = FileManager.default
+        let entries = try fileManager.contentsOfDirectory(
+            at: stagingURL,
+            includingPropertiesForKeys: nil,
+            options: [.skipsHiddenFiles]
+        )
+
+        for entryURL in entries {
+            let destinationURL = outputURL.appendingPathComponent(entryURL.lastPathComponent)
+            if fileManager.fileExists(atPath: destinationURL.path) {
+                try fileManager.removeItem(at: destinationURL)
+            }
+            try fileManager.moveItem(at: entryURL, to: destinationURL)
+        }
     }
 
     private func writeAllureResults(for tests: [ExportedTest],
