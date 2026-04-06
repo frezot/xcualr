@@ -2,6 +2,14 @@ import Foundation
 import CryptoKit
 
 extension ExportCommand {
+    static func bundleIdentity(for inputPath: String) -> String {
+        let normalizedPath = URL(fileURLWithPath: inputPath)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+        return deterministicHash(for: normalizedPath)
+    }
+
     static func resolvePngQuantPath() -> String? {
         let candidates = [
             "/opt/homebrew/bin/pngquant",
@@ -53,11 +61,18 @@ extension ExportCommand {
     }
 
     func deterministicResultFileName(for testIdentifier: String) -> String {
-        "\(deterministicUUID(for: testIdentifier).uuidString.lowercased())-result.json"
+        let namespacedIdentifier = "\(Self.bundleIdentity(for: configuration.inputPath))|\(testIdentifier)"
+        return "\(deterministicUUID(for: namespacedIdentifier).uuidString.lowercased())-result.json"
     }
 
     func deterministicAttachmentSource(sourceKey: String, fileExtension: String) -> String {
-        "\(deterministicUUID(for: sourceKey).uuidString.lowercased())-attachment.\(fileExtension)"
+        let namespacedSourceKey = "\(Self.bundleIdentity(for: configuration.inputPath))|\(sourceKey)"
+        return "\(deterministicUUID(for: namespacedSourceKey).uuidString.lowercased())-attachment.\(fileExtension)"
+    }
+
+    private static func deterministicHash(for value: String) -> String {
+        let bytes = Insecure.MD5.hash(data: Data(value.utf8))
+        return bytes.map { String(format: "%02x", $0) }.joined()
     }
 
     private func deterministicUUID(for value: String) -> UUID {
