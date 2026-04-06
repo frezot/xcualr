@@ -1,5 +1,4 @@
 import Foundation
-import Darwin
 
 enum CLIError: Error, CustomStringConvertible {
     case usage(String)
@@ -17,7 +16,7 @@ enum CLIError: Error, CustomStringConvertible {
 
 @main
 struct XCUALR {
-    private static let version = "0.1.1"
+    static let version = "0.1.2"
 
     static func main() {
         do {
@@ -122,19 +121,9 @@ struct XCUALR {
 
 struct ExportCommand {
     let configuration: ExportConfiguration
-    private let useColor = isatty(STDERR_FILENO) != 0
     let pngQuantPath = Self.resolvePngQuantPath()
     private nonisolated(unsafe) static var didPrintPngQuantHint = false
     static let paletteOptimizationMinimumSizeBytes: Int64 = 16 * 1024
-
-    private func stylize(_ text: String, _ code: String) -> String {
-        guard useColor else { return text }
-        return "\u{001B}[\(code)m\(text)\u{001B}[0m"
-    }
-
-    private func coloredAppName() -> String {
-        stylize("XCUALR", "1;36")
-    }
 
     private func logStage(_ message: String) {
         fputs("\(message)\n", stderr)
@@ -169,7 +158,8 @@ struct ExportCommand {
         }
 
         let tool = XCResultTool()
-        logStage("\(coloredAppName()) export started: \(inputURL.lastPathComponent) -> \(outputURL.path)")
+        logStage("XCUALR \(XCUALR.version) export started:")
+        logStage("  \(inputURL.lastPathComponent) -> \(outputURL.path)")
         logStage("Reading xcresult bundle...")
         let issueCatalog = try IssueCatalog.load(fromXCResultPath: configuration.inputPath)
         let activityCatalog = try ActivityCatalog.load(fromXCResultPath: configuration.inputPath)

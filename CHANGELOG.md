@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.2
+
+- Added the CLI version to the export start log line and reformatted it onto two lines for easier CI log reading.
+- Simplified the startup logging code by removing terminal color handling from the export banner.
+
 ## 0.1.1
 
 - Split the former monolithic `main.swift` into focused Swift source files by responsibility.
