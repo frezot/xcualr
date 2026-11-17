@@ -343,15 +343,16 @@ struct ExportCommand {
         return (first["deviceName"] as? String) ?? (first["name"] as? String)
     }
 
-    private func buildStatusDetails(for test: ExportedTest,
-                                    testDetails: [String: Any]?,
-                                    failureTrace: String?) -> AllureStatusDetails? {
+    func buildStatusDetails(for test: ExportedTest,
+                            testDetails: [String: Any]?,
+                            failureTrace: String?) -> AllureStatusDetails? {
         guard TestStatus(xcresultStatus: test.status) == .failed else {
             return nil
         }
-        let message = test.failureMessages.isEmpty
+        let messages = FailureMessageCollector.messages(for: test, details: testDetails)
+        let message = messages.isEmpty
             ? nil
-            : test.failureMessages.map(normalizeFailureMessage).joined(separator: "\n")
+            : messages.map(normalizeFailureMessage).joined(separator: "\n")
         let trace = failureTrace ?? FailureTraceParser().trace(from: testDetails)
         if message == nil, trace == nil {
             return nil
