@@ -16,7 +16,7 @@ enum CLIError: Error, CustomStringConvertible {
 
 @main
 struct XCUALR {
-    static let version = "0.1.3"
+    static let version = "0.1.4"
 
     static func main() {
         do {

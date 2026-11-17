@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.4
+
+- Added optional `--junit <file.xml>` export alongside Allure using the same parsed test details.
+- Preserved real test durations and full failure text in flat JUnit reports with consistent counts and expected failures treated as passed.
+- Rejected unknown JUnit test statuses and conflicting report paths, and retained failure messages from repeated runs without duplicating them across data sources.
+- Staged reports inside the Allure directory and preserved existing output when report creation failed.
+- Fixed forced directory replacement and preserved nested report siblings when appending exports.
+- Loaded issue and activity catalogs after xcresulttool initialized fresh merged bundles, keeping the first export consistent with later exports.
+- Fixed missing Allure failure messages for merged multi-device bundles by sharing failure collection with JUnit, preserving assertion order and repeated failures.
+
 ## 0.1.3
 
 - Added a per-test `host` label derived from each test's run device, so Allure's timeline separates results by device even for merged multi-device `.xcresult` bundles.
