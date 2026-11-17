@@ -251,7 +251,7 @@ struct ExportCommand {
                 stop: normalizedStop,
                 description: nil,
                 descriptionHtml: nil,
-                labels: buildLabels(for: test),
+                labels: buildLabels(for: test, testDetails: testDetails),
                 links: [],
                 parameters: [],
                 rerunOf: nil,
@@ -271,12 +271,22 @@ struct ExportCommand {
         }
     }
 
-    private func buildLabels(for test: ExportedTest) -> [AllureLabel] {
+    private func buildLabels(for test: ExportedTest, testDetails: [String: Any]?) -> [AllureLabel] {
         var labels = [AllureLabel(name: "suite", value: test.suite)]
-        if let runDestination = test.runDestination {
-            labels.append(AllureLabel(name: "runDestination", value: runDestination))
+        let host = deviceName(from: testDetails) ?? test.runDestination
+        if let host {
+            labels.append(AllureLabel(name: "host", value: host))
+            labels.append(AllureLabel(name: "runDestination", value: host))
         }
         return labels
+    }
+
+    private func deviceName(from testDetails: [String: Any]?) -> String? {
+        guard let devices = testDetails?["devices"] as? [[String: Any]],
+              let first = devices.first else {
+            return nil
+        }
+        return (first["deviceName"] as? String) ?? (first["name"] as? String)
     }
 
     private func buildStatusDetails(for test: ExportedTest,
