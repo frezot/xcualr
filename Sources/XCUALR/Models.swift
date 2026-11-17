@@ -3,6 +3,7 @@ import Foundation
 struct ExportConfiguration {
     let inputPath: String
     let outputPath: String
+    let junitPath: String?
     let imageScale: Int
     let passedStepImagePaletteColors: Int
     let rawAttachments: Bool
@@ -19,6 +20,21 @@ struct ExportedTest: Codable {
     let runDestination: String?
     let start: String?
     let failureMessages: [String]
+}
+
+enum TestStatus: String {
+    case passed
+    case failed
+    case skipped
+
+    init?(xcresultStatus: String?) {
+        switch xcresultStatus {
+        case "Passed", "Expected Failure": self = .passed
+        case "Failed": self = .failed
+        case "Skipped": self = .skipped
+        default: return nil
+        }
+    }
 }
 
 struct AllureResult: Encodable {

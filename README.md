@@ -18,6 +18,7 @@ __xcualr__ is a native Swift rework focused on fixing those attachment-export ga
 ## What xcualr does
 
 - converts `.xcresult` into Allure-compatible result JSON
+- optionally writes a JUnit XML report in the same export
 - exports screenshots, logs, screen recordings, and other test attachments
 - keeps the export format close to the existing `xcresults` output
 - handles HEIC and HEIF attachments by converting them to PNG (unless raw export is requested)
@@ -68,6 +69,7 @@ xcualr export <path-to-xcresult> -o <output-dir> [options]
 
 Options:
 
+- `--junit <file.xml>`: also write JUnit XML (replaces the file; creates parent directories)
 - `--image-scale <int>`: downscale exported images, default `3`
 - `--passed-step-image-palette-colors <int>`: palette size for passed-step screenshots, default `64`
 - `--raw-attachments`: keep attachments as-is; HEIC and HEIF stay in their original format
@@ -89,12 +91,47 @@ xcualr export <path-to-xcresult> -o build/allure-results
 allurectl upload --ignore-passed-test-attachments build/allure-results
 ```
 
+Example for JUnit and Allure together:
+
+```sh
+xcualr export <path-to-xcresult> -o build/allure-results --junit build/junit.xml
+```
+
+JUnit uses real per-test durations, counts expected failures as passed, and combines
+all failure messages and the trace in one failure element per test. Failure text
+uses typographic quotes and arrows. The report describes the current bundle only,
+even when Allure artifacts are appended to an existing directory. Unknown test
+statuses cause JUnit export to fail rather than being reported as passed.
+
+A JUnit file inside the Allure directory is staged with the Allure artifacts,
+including with `--force`. The path must not overwrite an exported artifact or a
+file inside the input bundle. An external JUnit file and the Allure directory are
+published independently; a report write error leaves the existing Allure output intact.
+
 ## Design notes
 
 - native Swift implementation with no required runtime dependencies
 - `pngquant` is used for PNG optimization when available and the native Swift quantizer is used as a fallback
 - raw export is available when you want original attachments without image conversion or palette optimization
 - the project is intended to stay simple to run in CI on macOS
+
+## Verification
+
+```sh
+swift test
+./package.sh
+python3 Tests/check_junit.py
+```
+
+The integration check uses the release binary and the bundles in `examples/`,
+including a fresh merged bundle for each run. It validates XML, counts, durations,
+failure text, deterministic output, append/replace behavior, preservation of old
+output on report errors, and byte-for-byte Allure parity with and without
+`--junit` using raw attachments. Generated files stay in `examples/tmp/junit-check/`.
+
+Pass `--reference /path/to/previous/xcualr` to also compare Allure artifacts with
+a previous release (exact file contents; no fields ignored). Optional bundle
+paths select specific fixtures without creating a merged bundle.
 
 ## Credits
 

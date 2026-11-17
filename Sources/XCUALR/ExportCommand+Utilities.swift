@@ -109,21 +109,6 @@ extension ExportCommand {
         return Int64(value * 1000)
     }
 
-    func doubleValue(_ value: Any?) -> Double? {
-        switch value {
-        case let number as NSNumber:
-            return number.doubleValue
-        case let value as Double:
-            return value
-        case let value as Int:
-            return Double(value)
-        case let value as String:
-            return Double(value)
-        default:
-            return nil
-        }
-    }
-
     func iso8601Milliseconds(from value: String?) -> Int64? {
         guard let value else {
             return nil

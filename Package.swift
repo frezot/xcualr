@@ -13,6 +13,7 @@ let package = Package(
         .executableTarget(
             name: "XCUALR",
             path: "Sources/XCUALR"
-        )
+        ),
+        .testTarget(name: "XCUALRTests", dependencies: ["XCUALR"])
     ]
 )

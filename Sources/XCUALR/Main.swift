@@ -42,8 +42,9 @@ struct XCUALR {
         }
     }
 
-    private static func parseExportConfiguration(_ arguments: [String]) throws -> ExportConfiguration {
+    static func parseExportConfiguration(_ arguments: [String]) throws -> ExportConfiguration {
         var outputPath: String?
+        var junitPath: String?
         var imageScale = 3
         var passedStepImagePaletteColors = 64
         var rawAttachments = false
@@ -57,10 +58,16 @@ struct XCUALR {
             switch argument {
             case "-o", "--output":
                 index += 1
-                guard index < arguments.count else {
+                guard index < arguments.count, !arguments[index].isEmpty, !arguments[index].hasPrefix("-") else {
                     throw CLIError.usage("Missing value for \(argument)\n\n\(usage())")
                 }
                 outputPath = arguments[index]
+            case "--junit":
+                index += 1
+                guard index < arguments.count, !arguments[index].isEmpty, !arguments[index].hasPrefix("-") else {
+                    throw CLIError.usage("Missing value for --junit\n\n\(usage())")
+                }
+                junitPath = arguments[index]
             case "--image-scale":
                 index += 1
                 guard index < arguments.count, let value = Int(arguments[index]), value > 0 else {
@@ -97,6 +104,7 @@ struct XCUALR {
         return ExportConfiguration(
             inputPath: positional[0],
             outputPath: outputPath,
+            junitPath: junitPath,
             imageScale: imageScale,
             passedStepImagePaletteColors: passedStepImagePaletteColors,
             rawAttachments: rawAttachments,
@@ -111,6 +119,7 @@ struct XCUALR {
           xcualr export <path-to-xcresult> -o <output-dir> [options]
 
         Options:
+          --junit <file.xml>                             Also write a JUnit XML report
           --image-scale <int>                            Default: 3
           --passed-step-image-palette-colors <int>       Default: 64
           --raw-attachments                              Keep attachments as-is; HEIC/HEIF stay in their original format
@@ -145,6 +154,9 @@ struct ExportCommand {
         let exportStartedAt = Date()
         let inputURL = URL(fileURLWithPath: configuration.inputPath)
         let outputURL = URL(fileURLWithPath: configuration.outputPath)
+        let junitDestination = try configuration.junitPath.map {
+            try JUnitDestination(path: $0, inputURL: inputURL, allureURL: outputURL)
+        }
         let stagingURL = outputURL.deletingLastPathComponent().appendingPathComponent(
             ".\(outputURL.lastPathComponent).staging-\(UUID().uuidString)",
             isDirectory: true
@@ -161,29 +173,28 @@ struct ExportCommand {
         logStage("XCUALR \(XCUALR.version) export started:")
         logStage("  \(inputURL.lastPathComponent) -> \(outputURL.path)")
         logStage("Reading xcresult bundle...")
-        let issueCatalog = try IssueCatalog.load(fromXCResultPath: configuration.inputPath)
-        let activityCatalog = try ActivityCatalog.load(fromXCResultPath: configuration.inputPath)
         let summary = try tool.readTestResultsSummary(at: configuration.inputPath)
         let testsTree = try tool.readTestResultsTree(at: configuration.inputPath)
+        // xcresulttool creates the SQLite database lazily for freshly merged bundles.
+        let issueCatalog = try IssueCatalog.load(fromXCResultPath: configuration.inputPath)
+        let activityCatalog = try ActivityCatalog.load(fromXCResultPath: configuration.inputPath)
         let exportedTests = SummaryParser()
             .collectTests(from: testsTree, summary: summary)
 
         logStage("Exporting attachments...")
         let attachmentCatalog = try exportAttachments(tool: tool, to: stagingURL)
-        logStage("Writing Allure results...")
-        try writeAllureResults(
+        logStage(junitDestination == nil ? "Writing Allure results..." : "Writing Allure and JUnit results...")
+        try writeTestResults(
             for: exportedTests,
             tool: tool,
             attachmentCatalog: attachmentCatalog,
             issueCatalog: issueCatalog,
             activityCatalog: activityCatalog,
-            to: stagingURL
+            allureDirectory: stagingURL,
+            junitDestination: junitDestination
         )
 
         logStage("Finalizing output...")
-        if configuration.force, FileManager.default.fileExists(atPath: outputURL.path) {
-            try FileManager.default.removeItem(at: outputURL)
-        }
         if FileManager.default.fileExists(atPath: outputURL.path) {
             if configuration.force {
                 _ = try FileManager.default.replaceItemAt(outputURL, withItemAt: stagingURL)
@@ -201,25 +212,33 @@ struct ExportCommand {
         let fileManager = FileManager.default
         let entries = try fileManager.contentsOfDirectory(
             at: stagingURL,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
+            includingPropertiesForKeys: [.isDirectoryKey]
         )
 
         for entryURL in entries {
             let destinationURL = outputURL.appendingPathComponent(entryURL.lastPathComponent)
-            if fileManager.fileExists(atPath: destinationURL.path) {
+            var destinationIsDirectory: ObjCBool = false
+            if fileManager.fileExists(atPath: destinationURL.path, isDirectory: &destinationIsDirectory) {
+                if destinationIsDirectory.boolValue,
+                   try entryURL.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true {
+                    try mergeExportArtifacts(from: entryURL, into: destinationURL)
+                    continue
+                }
                 try fileManager.removeItem(at: destinationURL)
             }
             try fileManager.moveItem(at: entryURL, to: destinationURL)
         }
     }
 
-    private func writeAllureResults(for tests: [ExportedTest],
-                                    tool: XCResultTool,
-                                    attachmentCatalog: AttachmentCatalog,
-                                    issueCatalog: IssueCatalog,
-                                    activityCatalog: ActivityCatalog,
-                                    to outputURL: URL) throws {
+    // Both formats consume the same per-test reads; only the small JUnit cases are retained.
+    private func writeTestResults(for tests: [ExportedTest],
+                                  tool: XCResultTool,
+                                  attachmentCatalog: AttachmentCatalog,
+                                  issueCatalog: IssueCatalog,
+                                  activityCatalog: ActivityCatalog,
+                                  allureDirectory: URL,
+                                  junitDestination: JUnitDestination?) throws {
+        var junitCases: [JUnitCase] = []
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
 
@@ -231,44 +250,79 @@ struct ExportCommand {
                 try tool.readTestDetails(at: configuration.inputPath, testID: $0)
             }
             let failureTrace = issueCatalog.trace(for: test.identifier)
-            var resolver = attachmentCatalog.resolver(for: test)
-            var timingResolver = activityCatalog.resolver(for: test)
-            let rootAttachments = buildRootAttachments(from: activities, resolver: &resolver)
-            let steps = buildSteps(
-                from: activities,
-                resolver: &resolver,
-                timingResolver: &timingResolver,
-                defaultFailureTrace: failureTrace
-            )
-            let normalizedStart = steps.first?.start ?? buildStart(for: test, testDetails: testDetails)
-            let normalizedStop = steps.last?.stop ?? buildStop(for: test, testDetails: testDetails)
-            let result = AllureResult(
-                name: test.name,
-                status: mapStatus(test.status),
-                fullName: test.identifier,
-                historyId: "\(test.suite)/\(test.identifier)",
-                start: normalizedStart,
-                stop: normalizedStop,
-                description: nil,
-                descriptionHtml: nil,
-                labels: buildLabels(for: test, testDetails: testDetails),
-                links: [],
-                parameters: [],
-                rerunOf: nil,
-                stage: nil,
-                testCaseId: nil,
-                uuid: nil,
-                attachments: rootAttachments,
-                steps: steps,
-                statusDetails: buildStatusDetails(for: test, testDetails: testDetails, issueCatalog: issueCatalog)
-            )
-            if !configuration.rawAttachments && configuration.passedStepImagePaletteColors > 0 {
-                optimizePassedStepAttachments(in: result.steps, outputURL: outputURL)
+            if junitDestination != nil {
+                junitCases.append(try JUnitCaseBuilder().build(
+                    for: test, testDetails: testDetails, issueTrace: failureTrace
+                ))
             }
-            let fileURL = outputURL.appendingPathComponent(deterministicResultFileName(for: test.identifier))
-            let data = try encoder.encode(result)
-            try data.write(to: fileURL)
+            let result = buildAllureResult(
+                for: test,
+                activities: activities,
+                testDetails: testDetails,
+                failureTrace: failureTrace,
+                attachmentCatalog: attachmentCatalog,
+                activityCatalog: activityCatalog
+            )
+            try writeAllureResult(result, for: test, encoder: encoder, to: allureDirectory)
         }
+
+        if let junitDestination {
+            try JUnitExporter().write(
+                tests: junitCases,
+                suiteName: URL(fileURLWithPath: configuration.inputPath).deletingPathExtension().lastPathComponent,
+                to: junitDestination.writeURL(stagingDirectory: allureDirectory)
+            )
+        }
+    }
+
+    private func buildAllureResult(for test: ExportedTest,
+                                   activities: [String: Any]?,
+                                   testDetails: [String: Any]?,
+                                   failureTrace: String?,
+                                   attachmentCatalog: AttachmentCatalog,
+                                   activityCatalog: ActivityCatalog) -> AllureResult {
+        var resolver = attachmentCatalog.resolver(for: test)
+        var timingResolver = activityCatalog.resolver(for: test)
+        let rootAttachments = buildRootAttachments(from: activities, resolver: &resolver)
+        let steps = buildSteps(
+            from: activities,
+            resolver: &resolver,
+            timingResolver: &timingResolver,
+            defaultFailureTrace: failureTrace
+        )
+        let normalizedStart = steps.first?.start ?? buildStart(for: test, testDetails: testDetails)
+        let normalizedStop = steps.last?.stop ?? buildStop(for: test, testDetails: testDetails)
+        return AllureResult(
+            name: test.name,
+            status: TestStatus(xcresultStatus: test.status)?.rawValue,
+            fullName: test.identifier,
+            historyId: "\(test.suite)/\(test.identifier)",
+            start: normalizedStart,
+            stop: normalizedStop,
+            description: nil,
+            descriptionHtml: nil,
+            labels: buildLabels(for: test, testDetails: testDetails),
+            links: [],
+            parameters: [],
+            rerunOf: nil,
+            stage: nil,
+            testCaseId: nil,
+            uuid: nil,
+            attachments: rootAttachments,
+            steps: steps,
+            statusDetails: buildStatusDetails(for: test, testDetails: testDetails, failureTrace: failureTrace)
+        )
+    }
+
+    private func writeAllureResult(_ result: AllureResult,
+                                  for test: ExportedTest,
+                                  encoder: JSONEncoder,
+                                  to outputURL: URL) throws {
+        if !configuration.rawAttachments && configuration.passedStepImagePaletteColors > 0 {
+            optimizePassedStepAttachments(in: result.steps, outputURL: outputURL)
+        }
+        let fileURL = outputURL.appendingPathComponent(deterministicResultFileName(for: test.identifier))
+        try encoder.encode(result).write(to: fileURL)
     }
 
     private func buildLabels(for test: ExportedTest, testDetails: [String: Any]?) -> [AllureLabel] {
@@ -291,16 +345,14 @@ struct ExportCommand {
 
     private func buildStatusDetails(for test: ExportedTest,
                                     testDetails: [String: Any]?,
-                                    issueCatalog: IssueCatalog) -> AllureStatusDetails? {
-        let normalizedStatus = mapStatus(test.status)
-        let shouldEmitDetails = normalizedStatus == "failed" || normalizedStatus == "broken"
-        guard shouldEmitDetails else {
+                                    failureTrace: String?) -> AllureStatusDetails? {
+        guard TestStatus(xcresultStatus: test.status) == .failed else {
             return nil
         }
         let message = test.failureMessages.isEmpty
             ? nil
             : test.failureMessages.map(normalizeFailureMessage).joined(separator: "\n")
-        let trace = issueCatalog.trace(for: test.identifier) ?? FailureTraceParser().trace(from: testDetails)
+        let trace = failureTrace ?? FailureTraceParser().trace(from: testDetails)
         if message == nil, trace == nil {
             return nil
         }
@@ -311,19 +363,6 @@ struct ExportCommand {
             message: message,
             trace: trace
         )
-    }
-
-    private func mapStatus(_ status: String?) -> String? {
-        switch status {
-        case "Passed", "Expected Failure":
-            return "passed"
-        case "Failed":
-            return "failed"
-        case "Skipped":
-            return "skipped"
-        default:
-            return nil
-        }
     }
 
     private func buildStart(for test: ExportedTest, testDetails: [String: Any]?) -> Int64? {

@@ -168,3 +168,18 @@ func runCommand(executablePath: String, arguments: [String]) throws -> Data {
 
     return stdoutBox.data
 }
+
+func doubleValue(_ value: Any?) -> Double? {
+    switch value {
+    case let number as NSNumber:
+        return number.doubleValue
+    case let value as Double:
+        return value
+    case let value as Int:
+        return Double(value)
+    case let value as String:
+        return Double(value)
+    default:
+        return nil
+    }
+}
