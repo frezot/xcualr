@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.3
+
+- Added a per-test `host` label derived from each test's run device, so Allure's timeline separates results by device even for merged multi-device `.xcresult` bundles.
+- Set the `runDestination` label per test from the same device info instead of the summary's first device.
+
 ## 0.1.2
 
 - Added the CLI version to the export start log line and reformatted it onto two lines for easier CI log reading.
