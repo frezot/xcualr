@@ -70,4 +70,39 @@ final class JUnitExporterTests: XCTestCase {
         XCTAssertEqual(times, ["0.000", "0.000", "0.000", "0.000", "0.001", "0.001"])
     }
 
+    func testWallClockDurationForParallelAndSequentialRuns() throws {
+        for (secondStart, expected) in [(Int64(1_000), "12.000"), (Int64(11_000), "22.000")] {
+            let cases = [
+                JUnitCase(name: "first", className: "Suite", duration: 10, status: .failed,
+                          failureMessages: ["failure"], trace: nil, start: 1_000, stop: 11_000),
+                JUnitCase(name: "second", className: "Suite", duration: 12, status: .passed,
+                          failureMessages: [], trace: nil, start: secondStart, stop: secondStart + 12_000)
+            ]
+            let document = try XMLDocument(xmlString: JUnitExporter().render(tests: cases.reversed(), suiteName: "suite"))
+            for path in ["/testsuites", "/testsuites/testsuite"] {
+                let suite = try XCTUnwrap(document.nodes(forXPath: path).first as? XMLElement)
+                XCTAssertEqual(suite.attribute(forName: "time")?.stringValue, expected)
+                XCTAssertEqual(suite.attribute(forName: "tests")?.stringValue, "2")
+                XCTAssertEqual(suite.attribute(forName: "failures")?.stringValue, "1")
+                XCTAssertEqual(suite.attribute(forName: "errors")?.stringValue, "0")
+                XCTAssertEqual(suite.attribute(forName: "skipped")?.stringValue, "0")
+            }
+            XCTAssertEqual(try document.nodes(forXPath: "//testcase/@time").compactMap(\.stringValue), ["12.000", "10.000"])
+        }
+    }
+
+    func testIncompleteAndInvalidIntervalsFallBackToSum() throws {
+        for interval: (Int64?, Int64?) in [(nil, nil), (1_000, nil), (nil, 2_000), (2_000, 1_000)] {
+            let cases = [
+                JUnitCase(name: "first", className: "Suite", duration: 10, status: .passed,
+                          failureMessages: [], trace: nil, start: 1_000, stop: 11_000),
+                JUnitCase(name: "second", className: "Suite", duration: 12, status: .passed,
+                          failureMessages: [], trace: nil, start: interval.0, stop: interval.1)
+            ]
+            let document = try XMLDocument(xmlString: JUnitExporter().render(tests: cases, suiteName: "suite"))
+            XCTAssertEqual(try document.nodes(forXPath: "/testsuites/@time").first?.stringValue, "22.000")
+            XCTAssertEqual(try document.nodes(forXPath: "/testsuites/testsuite/@time").first?.stringValue, "22.000")
+        }
+    }
+
 }

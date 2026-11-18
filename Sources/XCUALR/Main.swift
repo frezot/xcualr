@@ -16,7 +16,7 @@ enum CLIError: Error, CustomStringConvertible {
 
 @main
 struct XCUALR {
-    static let version = "0.1.4"
+    static let version = "0.1.5"
 
     static func main() {
         do {
@@ -250,11 +250,6 @@ struct ExportCommand {
                 try tool.readTestDetails(at: configuration.inputPath, testID: $0)
             }
             let failureTrace = issueCatalog.trace(for: test.identifier)
-            if junitDestination != nil {
-                junitCases.append(try JUnitCaseBuilder().build(
-                    for: test, testDetails: testDetails, issueTrace: failureTrace
-                ))
-            }
             let result = buildAllureResult(
                 for: test,
                 activities: activities,
@@ -263,6 +258,12 @@ struct ExportCommand {
                 attachmentCatalog: attachmentCatalog,
                 activityCatalog: activityCatalog
             )
+            if junitDestination != nil {
+                junitCases.append(try JUnitCaseBuilder().build(
+                    for: test, testDetails: testDetails, issueTrace: failureTrace,
+                    start: result.start, stop: result.stop
+                ))
+            }
             try writeAllureResult(result, for: test, encoder: encoder, to: allureDirectory)
         }
 

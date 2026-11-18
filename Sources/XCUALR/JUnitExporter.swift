@@ -10,7 +10,7 @@ struct JUnitExporter {
     func render(tests: [JUnitCase], suiteName: String) -> String {
         let failures = tests.filter { $0.status == .failed }.count
         let skipped = tests.filter { $0.status == .skipped }.count
-        let duration = tests.reduce(0) { $0 + $1.roundedDuration }
+        let duration = suiteDuration(tests)
         let counts = "tests=\"\(tests.count)\" failures=\"\(failures)\" errors=\"0\" "
             + "skipped=\"\(skipped)\" time=\"\(time(duration))\""
         var lines = [
@@ -41,6 +41,20 @@ struct JUnitExporter {
         }
         lines += ["  </testsuite>", "</testsuites>"]
         return lines.joined(separator: "\n") + "\n"
+    }
+
+    private func suiteDuration(_ tests: [JUnitCase]) -> Double {
+        // An incomplete interval cannot describe the full run; retain the legacy sum.
+        let intervals = tests.compactMap { test -> (start: Int64, stop: Int64)? in
+            guard let start = test.start, let stop = test.stop, stop >= start else { return nil }
+            return (start, stop)
+        }
+        guard intervals.count == tests.count,
+              let start = intervals.map(\.start).min(),
+              let stop = intervals.map(\.stop).max() else {
+            return tests.reduce(0) { $0 + $1.roundedDuration }
+        }
+        return (Double(stop) - Double(start)) / 1000
     }
 
     private func time(_ seconds: Double) -> String {

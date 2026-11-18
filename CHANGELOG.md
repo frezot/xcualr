@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file.
 
+## 0.1.5
+
+- Changed JUnit suite durations to wall-clock time using the same test start/stop timestamps as Allure, with the previous summed duration as fallback when timestamps are incomplete. Individual testcase durations and counts are unchanged.
+
 ## 0.1.4
 
 - Added optional `--junit <file.xml>` export alongside Allure using the same parsed test details.
